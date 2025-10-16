@@ -1,0 +1,8 @@
+.Renviron
+.env
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+data_raw/
+docs/
