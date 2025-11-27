@@ -285,12 +285,18 @@ fix_sf_geometry <- function(df, geom_col, geom_crs, geom_type) {
   # ensure column exists
   stopifnot(geom_col %in% names(df))
 
-  # 1 Convert WKB to sfc
-  df[[geom_col]] <- sf::st_as_sfc(df[[geom_col]], EWKB = TRUE, crs = geom_crs)
-
   # 2 Convert to sf if not already
   if (!inherits(df, "sf")) {
-    df <- sf::st_as_sf(df)
+
+    # If geometry column is ALREADY an sfc object → make sf directly
+    if (inherits(df[[geom_col]], "sfc")) {
+      df <- sf::st_sf(df, sf_column_name = geom_col, crs = geom_crs)
+
+    } else {
+      # Otherwise convert using st_as_sfc (for WKT/WKB)
+      df[[geom_col]] <- sf::st_as_sfc(df[[geom_col]], EWKB = TRUE, crs = geom_crs)
+      df <- sf::st_sf(df, sf_column_name = geom_col, crs = geom_crs)
+    }
   }
 
   # 3 Ensure geometry column is properly set
@@ -307,3 +313,27 @@ fix_sf_geometry <- function(df, geom_col, geom_crs, geom_type) {
   # 6 Return fixed sf object
   return(df)
 }
+
+# Function to compare column names and types between two data frames
+compare_columns <- function(df1, df2) {
+  # Compare names
+  name_match <- names(df1) == names(df2)
+
+  # Compare types
+  type_match <- sapply(df1, class) == sapply(df2, class)
+
+  # Find mismatches
+  mismatch_idx <- which(!name_match | !type_match)
+
+  if(length(mismatch_idx) > 0){
+    message("❌ Columns with mismatched names or types:")
+    for(i in mismatch_idx){
+      message(sprintf("Column %d:", i))
+      message("  df1 name/type: ", names(df1)[i], "/", paste(class(df1[[i]]), collapse=", "))
+      message("  df2 name/type: ", names(df2)[i], "/", paste(class(df2[[i]]), collapse=", "))
+    }
+  } else {
+    message("✔ All column names and types match.")
+  }
+}
+
