@@ -16,10 +16,10 @@ pl_info <- get_db_info(pl_con)
 data_path <- "Data/"
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-## 1) catchmentdata.catchments_coarse table -----
+## 1) catchments.catchments -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-c_lt <- load_table(lt_con, "catchments", "catchments")
+## Prepare the catchment data with the same structure as the LT table
 catchments_pl <- st_read(paste0(data_path, "Catchments/WatershedsPL_corrected2.shp"), quiet = TRUE) |>
   st_transform(2180) |>
   rename(lakegid = lakeid,
@@ -41,9 +41,14 @@ catchments_pl <- st_read(paste0(data_path, "Catchments/WatershedsPL_corrected2.s
          area = st_area(geometry) |> as.numeric())|>
   sf::st_drop_geometry() |>
   st_set_geometry("shape") |>
-  select(any_of(names(c_lt)))
+  select(all_of(c(
+    "catchmentid", "shape", "type", "segmentid", "lakegid", "kadastroid", "kadastroid_lake",
+    "flowto", "segmentto", "outletid", "addedarea", "inflowarea", "wbriver_code", "wlake_wb",
+    "inletid", "x", "y", "lon", "lat", "area"
+  )))
 
-compare_columns(c_lt, catchments_pl)
+# catchments_lt <- load_table(lt_con, "catchments", "catchments")
+# compare_columns(catchments_lt, catchments_pl)
 
 table_constraint <- "
   catchmentid BIGINT PRIMARY KEY,
@@ -67,198 +72,190 @@ table_constraint <- "
   lat DOUBLE PRECISION,
   area DOUBLE PRECISION
 "
+
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchments"))
 write_in_table(pl_con, "catchments", "catchments", catchments_pl, table_constraint = table_constraint)
 
 
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 2) catchments.riversegments -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-c_pl_test <- load_table(pl_con, "catchments", "catchments")
-## Prepare the catchment data with the same structure as the LT table
-c_pl <- st_read(paste0(data_path, "Catchments/WatershedsPL_corrected2.shp"),
-                quiet = TRUE) |>
+rivers_pl <- st_read(paste0(data_path, "Catchments/RiversPLcorrected.shp"), quiet = TRUE) |>
   st_transform(2180) |>
-  rename(lakegid = lakeid,
-         kadastroid_lake= kadastro_1) |>
-  mutate(id = as.integer64(id),
-         type = as.integer64(type),
-         segmentid = as.integer64(segmentid),
+  rename(segmentid = id,
+         flowto = RiverTo,
+         shape = geometry,
+         skip_catchment = skip_catch,
+         length = SHAPE_Leng,
+         kadastroid_lake = kadastro_1) |>
+  mutate(segmentid = as.integer64(segmentid),
          flowto = as.integer64(flowto),
-         segmentto = as.integer64(segmentto),
-         outletid = as.integer64(outletid),
-         shape = geometry) |>
-  sf::st_drop_geometry() |>
-  select(names(c_lt))
+         skip_catchment = as.logical(skip_catchment),
+         kadastroid = NA_character_) |>
+  select(any_of(c(
+    "segmentid", "flowto", "shape", "skip_catchment", "kadastroid",
+    "kadastroid_lake", "wbriver_code", "wlake_wb", "length", "nodefrom",
+    "nodeto"
+  )))
 
-## Compare names with the LT table
-# c_lt <- load_table(lt_con, "catchments", "catchments")
-compare_columns(c_pl_test, c_pl)
+# rivers_lt <- load_table(lt_con, "catchments", "riversegments")
+# compare_columns(rivers_lt, rivers_pl)
 
 table_constraint <- "
-  id BIGINT PRIMARY KEY,
-  addedarea DOUBLE PRECISION,
-  area DOUBLE PRECISION,
+  segmentid BIGINT PRIMARY KEY,
   flowto BIGINT,
-  inflowarea DOUBLE PRECISION,
-  kadastroid TEXT,
-  kadastroid_lake TEXT,
-  lakegid TEXT,
-  outletid BIGINT,
-  segmentid BIGINT,
-  segmentto BIGINT,
-  shape geometry(MultiPolygon, 2180),
-  type BIGINT
-"
-
-## If needed, remove the existing table before writing the new on
-DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchmentdata", table = "catchments_coarse"))
-write_in_table(pl_con, "catchmentdata", "catchments_coarse", c_pl,
-               table_constraint = table_constraint)
-
-## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-## 2) catchmentdata.segments_coarse table -----
-## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-r_lt <- load_table(lt_con, "catchmentdata", "segments_coarse")
-
-r_pl <- st_read("data/ForSvajunasCorrected/RiversPLcorrected.shp", quiet = TRUE) |>
-  st_transform(2180) |>
-  rename(riverto = RiverTo,
-         length = SHAPE_Leng,
-         skip_catchment = skip_catch,
-         kadastroid_lake = kadastro_1,
-         wbriver_code = wbriver_co) |>
-  mutate(id = as.integer64(id),
-         riverto = as.integer64(riverto),
-         skip_catchment = as.logical(skip_catchment),
-         geometry2 = geometry) |>
-  st_drop_geometry() |>
-  rename(geometry = geometry2) |>
-  select(names(r_lt))
-
-compare_columns(r_lt, r_pl)
-
-table_constraint_r <- "
-  id BIGINT PRIMARY KEY,
-  riverto BIGINT,
-  length DOUBLE PRECISION,
-  geometry geometry(MultiLineString, 2180),
   skip_catchment BOOLEAN,
   kadastroid TEXT,
   kadastroid_lake TEXT,
-  wbriver_code TEXT,
-  wlake_wb TEXT
+  wlake_wb TEXT,
+  length DOUBLE PRECISION,
+  shape geometry(MultiLineString, 2180)
 "
 
-write_in_table(pl_con, "catchmentdata", "segments_coarse", r_pl, table_constraint = table_constraint_r)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "riversegments"))
+write_in_table(pl_con, "catchments", "riversegments", rivers_pl, table_constraint = table_constraint)
 
-o_lt <- load_table(lt_con, "catchmentdata", "outlets")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 3) catchments.outlets -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-o_pl <- read.csv("data/ForSvajunasCorrected/outlets.csv", header = FALSE) |>
-  `names<-`(names(o_lt)) |>
+outlet_pl <- read.csv(paste0(data_path, "Catchments/outlets.csv"), header = FALSE) |>
+  `names<-`(c("index", "id", "outlettype", "outletname")) |>
   mutate(index = as.integer64(index),
          id = as.integer64(id),
          outlettype = as.integer64(outlettype))
 
-compare_columns(o_lt, o_pl)
+# outlet_lt <- load_table(lt_con, "catchments", "outlets")
+# compare_columns(outlet_lt, outlet_pl)
 
-table_constraint_o <- "
+table_constraint <- "
   index BIGINT,
   id BIGINT PRIMARY KEY,
   outlettype BIGINT,
   outletname TEXT
 "
 
-write_in_table(pl_con, "catchmentdata", "outlets", o_pl, table_constraint = table_constraint_o)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "outlets"))
+write_in_table(pl_con, "catchments", "outlets", outlet_pl, table_constraint = table_constraint)
 
-w_lt <- load_table(lt_con, "catchmentdata", "watersheds")
-w_pl <- read.csv("data/ForSvajunasCorrected/watersheds.csv", header = FALSE) |>
-  `names<-`(names(w_lt)) |>
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 4) catchments.watersheds -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+watersheds_pl <- read.csv(paste0(data_path, "Catchments/watersheds.csv"), header = FALSE) |>
+  `names<-`(c("watershedid", "basinname", "watershedname", "composite")) |>
   mutate(watershedid = as.integer64(watershedid))
 
-str(w_lt)
-str(w_pl)
+# watersheds_lt <- load_table(lt_con, "catchments", "watersheds")
+# compare_columns(watersheds_lt, watersheds_pl)
 
-compare_columns(w_lt, w_pl)
-
-table_constraint_w <- "
+table_constraint <- "
   watershedid BIGINT PRIMARY KEY,
   basinname TEXT,
   watershedname TEXT,
   composite TEXT
 "
-write_in_table(pl_con, "catchmentdata", "watersheds", w_pl, table_constraint = table_constraint_w)
 
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "watersheds"))
+write_in_table(pl_con, "catchments", "watersheds", watersheds_pl, table_constraint = table_constraint)
 
-cw_lt <- load_table(lt_con, "catchmentdata", "coarse_catchm_wsh")
-cw_pl <- read.csv("data/ForSvajunasCorrected/catchm_wshed.csv", header = FALSE) |>
-  `names<-`(names(cw_lt)) |>
-  mutate(catchmentid = as.integer64(catchmentid),
-         wshid  = as.integer64(wshid))
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 5) catchments.catchm_wshed -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-str(cw_lt)
-str(cw_pl)
-
-compare_columns(cw_lt, cw_pl)
-
-table_constraint_cw <- "
-  catchmentid BIGINT,
-  wshid BIGINT
-"
-
-write_in_table(pl_con, "catchmentdata", "coarse_catchm_wsh", cw_pl, table_constraint = table_constraint_cw)
-
-
-##==============================================================================
-write_in_table(pl_con, "catchments", "catchments_coarse", c_pl, table_constraint = table_constraint)
-write_in_table(pl_con, "catchments", "segments_coarse", r_pl, table_constraint = table_constraint_r)
-write_in_table(pl_con, "catchments", "outlets", o_pl, table_constraint = table_constraint_o)
-write_in_table(pl_con, "catchments", "watersheds", w_pl, table_constraint = table_constraint_w)
-
-
-cw_pl <- read.csv("data/ForSvajunasCorrected/catchm_wshed.csv", header = FALSE) |>
-  `names<-`(names(cw_lt)) |>
+catchm_wshed_pl <- read.csv(paste0(data_path, "Catchments/catchm_wshed.csv"), header = FALSE) |>
+  `names<-`(c("catchmentid", "wshid")) |>
   mutate(catchmentid = as.integer64(catchmentid),
          watershedid = as.integer64(wshid)) |>
   select(-wshid)
-table_constraint_cw <- "
+
+table_constraint <- "
   catchmentid BIGINT,
   watershedid BIGINT
 "
-write_in_table(pl_con, "catchments", "catchm_wshed", cw_pl, table_constraint = table_constraint_cw)
 
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchm_wshed"))
+write_in_table(pl_con, "catchments", "catchm_wshed", catchm_wshed_pl, table_constraint = table_constraint)
 
-## read landuse table
-lu_lt_landuse_swat_raster_lookup <- load_table(lt_con, "landuse", "landuse_swat_raster_lookup")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 6) catchments.watertransfer -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-lu_pl_lookup <- read.csv("data/Tables/lookup_lu10th_v1.csv", header = TRUE) |>
+transfer_pl <- data.frame(
+  id = integer64(0),
+  name = character(0),
+  outletid = integer64(0),
+  flowto = integer64(0),
+  multiplier = numeric(0)
+)
+
+# transfer_lt <- load_table(lt_con, "catchments", "watertransfer")
+# compare_columns(transfer_lt, transfer_pl)
+
+table_constraint <- "
+  id BIGINT PRIMARY KEY,
+  name TEXT,
+  outletid  BIGINT,
+  flowto BIGINT,
+  multiplier DOUBLE PRECISION
+"
+
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "watertransfer"))
+write_in_table(pl_con, "catchments", "watertransfer", transfer_pl, table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 7) landuse.landuse_swat_raster_lookup -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+lu_pl_lookup <- read.csv(paste0(data_path, "LU/lookup.csv"), header = TRUE) |>
   rename(swatcode = lu_SWATcode,
          raster_id = gridCode) |>
   select(swatcode, raster_id) |>
   mutate(swatcode = toupper(swatcode),
          raster_id = as.integer64(raster_id))
 
-compare_columns(lu_lt_landuse_swat_raster_lookup, lu_pl_lookup)
+# lu_lt_landuse_swat_raster_lookup <- load_table(lt_con, "landuse", "landuse_swat_raster_lookup")
+# compare_columns(lu_lt_landuse_swat_raster_lookup, lu_pl_lookup)
 
-table_constraint_lu <- "
+table_constraint <- "
   swatcode TEXT,
   raster_id BIGINT
 "
-write_in_table(pl_con, "landuse", "landuse_swat_raster_lookup", lu_pl_lookup, table_constraint = table_constraint_lu)
 
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "landuse", table = "landuse_swat_raster_lookup"))
+write_in_table(pl_con, "landuse", "landuse_swat_raster_lookup", lu_pl_lookup,
+               table_constraint = table_constraint)
 
-lu_lt_landusegroup_raster_lookup <- load_table(lt_con, "landuse", "landusegroup_raster_lookup")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 8) landuse.landusegroup_raster_lookup -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-table_constraint_lugroups <- "
+lu_pl_landusegroup_raster_lookup <- data.frame(
+  luclass = c("Agricultural", "Barren", "Forest", "Pasture", "Urban", "Water", "Wetland"),
+  raster_id = 1:7
+) |>
+  mutate(raster_id = as.integer64(raster_id))
+
+# lu_lt_landusegroup_raster_lookup <- load_table(lt_con, "landuse", "landusegroup_raster_lookup")
+# compare_columns(lu_lt_landusegroup_raster_lookup, lu_pl_landusegroup_raster_lookup)
+
+table_constraint <- "
   luclass TEXT,
   raster_id BIGINT
 "
 
-write_in_table(pl_con, "landuse", "landusegroup_raster_lookup", lu_lt_landusegroup_raster_lookup, table_constraint = table_constraint_lugroups)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "landuse",
+#                                    table = "landusegroup_raster_lookup"))
+write_in_table(pl_con, "landuse", "landusegroup_raster_lookup",
+               lu_pl_landusegroup_raster_lookup,
+               table_constraint = table_constraint)
 
-##==============================================================================
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 9) soil.soil_swat_raster_lookup -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-soil_pl_lookup <- read.csv("data/Tables/Lookup_soil.csv", header = TRUE)
+soil_pl_lookup <- read.csv(paste0(data_path, "soil/Lookup_soil.csv"), header = TRUE)
 
 soil_swat_raster_lookup_pl <- soil_pl_lookup |>
   rename(swatcode = SNAM,
@@ -266,20 +263,21 @@ soil_swat_raster_lookup_pl <- soil_pl_lookup |>
   mutate(raster_id = as.integer64(raster_id)) |>
   select(swatcode, raster_id)
 
-table_constraint_soil <- "
+# soil_swat_raster_lookup <- load_table(lt_con, "soil", "soil_swat_raster_lookup")
+# compare_columns(soil_swat_raster_lookup, soil_swat_raster_lookup_pl)
+
+table_constraint <- "
   swatcode TEXT,
   raster_id BIGINT
 "
 
-soil_swat_raster_lookup <- load_table(lt_con, "soil", "soil_swat_raster_lookup")
-compare_columns(soil_swat_raster_lookup, soil_swat_raster_lookup_pl)
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "soil", table = "soil_swat_raster_lookup"))
+write_in_table(pl_con, "soil", "soil_swat_raster_lookup", soil_swat_raster_lookup_pl,
+               table_constraint = table_constraint)
 
-write_in_table(pl_con, "soil", "soil_swat_raster_lookup", soil_swat_raster_lookup_pl, table_constraint = table_constraint_soil)
-
-##==============================================================================
-
-usersoil_lt <- load_table(lt_con, "swat2012", "usersoillt")
-write.csv(usersoil_lt, file = "usersoil_lt.csv", row.names = FALSE)
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 10) swat2012.usersoilpl -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 usersoil_pl <- soil_pl_lookup |>
   rename_with(tolower) |>
@@ -302,7 +300,14 @@ usersoil_pl <- soil_pl_lookup |>
          sol_ph1    = 5.238372) |>
   bind_rows(usersoil_lt |> filter(snam=="W") |> mutate(snam = "water") |> select(-id)) |>
   mutate(id = row_number()) |>
-  select(any_of(names(usersoil_lt )))|>
+  select(any_of(c(
+    "nlayers", "snam", "hydgrp", "anion_excl", "sol_zmx", "sol_crk", "sol_bd1", "sol_z1", "sol_awc1", "sol_cbn1", "sol_k1",
+    "clay1", "sand1", "silt1", "rock1", "sol_alb1", "sol_ec1", "usle_k1", "sol_bd2", "sol_z2", "sol_awc2", "sol_cbn2",
+    "sol_k2", "clay2", "sand2", "silt2", "rock2", "sol_ec2", "usle_k2", "sol_bd3", "sol_z3", "sol_awc3", "sol_cbn3",
+    "sol_k3", "clay3", "sand3", "silt3", "rock3", "sol_ec3", "usle_k3", "sol_no31", "sol_no32", "sol_no33", "sol_orgn1",
+    "sol_orgn2", "sol_labp1", "sol_orgn3", "sol_labp2", "sol_labp3", "sol_orgp1", "sol_orgp2", "prerco_sub", "sol_orgp3", "sol_alb2", "sol_ph1",
+    "id", "sol_alb3"
+  )))|>
   mutate(across(where(is.integer), as.numeric))|>
   mutate(id = as.integer(id)) |>
   group_by(snam) |>
@@ -310,13 +315,12 @@ usersoil_pl <- soil_pl_lookup |>
   ungroup()
 
 
+# usersoil_lt <- load_table(lt_con, "swat2012", "usersoillt")
+# compare_columns(usersoil_lt, usersoil_pl)
+# names(usersoil_lt)[!names(usersoil_lt) %in% names(usersoil_pl)]
+# names(usersoil_pl)[!names(usersoil_pl) %in% names(usersoil_lt)]
 
-compare_columns(usersoil_lt, usersoil_pl)
-
-names(usersoil_lt)[!names(usersoil_lt) %in% names(usersoil_pl)]
-names(usersoil_pl)[!names(usersoil_pl) %in% names(usersoil_lt)]
-
-table_constraint_usersoil <- "
+table_constraint <- "
   nlayers BIGINT,
   snam TEXT ,
   hydgrp TEXT,
@@ -376,121 +380,37 @@ table_constraint_usersoil <- "
   id INTEGER
 "
 
-write_in_table(pl_con, "swat2012", "usersoilpl", usersoil_pl, table_constraint = table_constraint_usersoil)
 DBI::dbRemoveTable(pl_con, DBI::Id(schema = "swat2012", table = "usersoilpl"))
-##==============================================================================
+write_in_table(pl_con, "swat2012", "usersoilpl", usersoil_pl, table_constraint = table_constraint)
 
-catchments_lt <- load_table(lt_con, "catchments", "catchments")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 11) mel_dr10lt.drainage_raster_lookup -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-catchments_pl <- st_read(paste0(data_path, "Catchments/WatershedsPL_corrected2.shp"), quiet = TRUE) |>
-  st_transform(2180) |>
-  rename(lakegid = lakeid,
-         kadastroid_lake= kadastro_1) |>
-  mutate(catchmentid = as.integer64(id),
-         type = as.integer64(type),
-         segmentid = as.integer64(segmentid),
-         flowto = as.integer64(flowto),
-         segmentto = as.integer64(segmentto),
-         outletid = as.integer64(outletid),
-         inletid = as.integer64(NA),
-         wbriver_code = NA_character_,
-         wlake_wb = NA_character_,
-         shape = geometry,
-         x = st_coordinates(st_centroid(geometry))[, 1],
-         y = st_coordinates(st_centroid(geometry))[, 2],
-         lon = st_coordinates(st_transform(st_centroid(geometry), 4326))[, 1],
-         lat = st_coordinates(st_transform(st_centroid(geometry), 4326))[, 2],
-         area = st_area(geometry) |> as.numeric())|>
-  sf::st_drop_geometry() |>
-  st_set_geometry("shape") |>
-  select(all_of(names(catchments_lt)))
+drainage_raster_lookup_pl <- data.frame(
+  gkodas = c("hm0", "hm0g"),
+  raster_id = 1:2
+) |>
+mutate(raster_id = as.integer64(raster_id))
 
-compare_columns(catchments_lt, catchments_pl)
+# hru_drainage_lt <- load_table(lt_con, "hru", "hrudrainage")
+# drainage_raster_lookup_lt <- load_table(lt_con, "mel_dr10lt", "drainage_raster_lookup")
+# compare_columns(drainage_raster_lookup_lt, drainage_raster_lookup_pl)
 
 table_constraint <- "
-  catchmentid BIGINT PRIMARY KEY,
-  shape geometry(MultiPolygon, 2180),
-  type BIGINT,
-  segmentid BIGINT,
-  lakegid TEXT,
-  kadastroid TEXT,
-  kadastroid_lake TEXT,
-  flowto BIGINT,
-  segmentto BIGINT,
-  outletid BIGINT,
-  addedarea DOUBLE PRECISION,
-  inflowarea DOUBLE PRECISION,
-  wbriver_code TEXT,
-  wlake_wb TEXT,
-  inletid BIGINT,
-  x DOUBLE PRECISION,
-  y DOUBLE PRECISION,
-  lon DOUBLE PRECISION,
-  lat DOUBLE PRECISION,
-  area DOUBLE PRECISION
-"
-write_in_table(pl_con, "catchments", "catchments", catchments_pl, table_constraint = table_constraint)
-
-##==============================================================================
-rivers_lt <- load_table(lt_con, "catchments", "riversegments")
-r_pl <- st_read("data/ForSvajunasCorrected/RiversPLcorrected.shp", quiet = TRUE) |>
-  st_transform(2180) |>
-  rename(segmentid = id,
-         flowto = RiverTo,
-         shape = geometry,
-         skip_catchment = skip_catch,
-         length = SHAPE_Leng,
-         kadastroid_lake = kadastro_1) |>
-  mutate(segmentid = as.integer64(segmentid),
-         flowto = as.integer64(flowto),
-         skip_catchment = as.logical(skip_catchment),
-         kadastroid = NA_character_) |>
-  select(any_of(names(rivers_lt)))
-
-compare_columns(rivers_lt, r_pl)
-
-table_constraint_r <- "
-  segmentid BIGINT PRIMARY KEY,
-  flowto BIGINT,
-  skip_catchment BOOLEAN,
-  kadastroid TEXT,
-  kadastroid_lake TEXT,
-  wlake_wb TEXT,
-  length DOUBLE PRECISION,
-  shape geometry(MultiLineString, 2180)
-"
-
-write_in_table(pl_con, "catchments", "riversegments", r_pl, table_constraint = table_constraint_r)
-##==============================================================================
-transfer_lt <- load_table(lt_con, "catchments", "watertransfer")
-transfer_lt_empty <- transfer_lt[0, ]
-
-table_constraint_transfer <- "
-  id BIGINT PRIMARY KEY,
-  name TEXT,
-  outletid  BIGINT,
-  flowto BIGINT,
-  multiplier DOUBLE PRECISION
-"
-
-write_in_table(pl_con, "catchments", "watertransfer", transfer_lt_empty, table_constraint = table_constraint_transfer)
-##==============================================================================
-
-hru_drainage_lt <- load_table(lt_con, "hru", "hrudrainage")
-mel_dr10lt.drainage_raster_lookup_lt <- load_table(lt_con, "mel_dr10lt", "drainage_raster_lookup")
-
-table_constraint_drain <- "
   gkodas TEXT,
   raster_id  BIGINT
 "
-write_in_table(pl_con, "mel_dr10lt", "drainage_raster_lookup",
-               mel_dr10lt.drainage_raster_lookup_lt, table_constraint = table_constraint_drain)
 
-##==============================================================================
-hru_atmdep_catchm_lt <- load_table(lt_con, "hru", "atmdep_catchm")
-atmdep2022_lt <- load_table(lt_con, "atm_deposition", "atmdep2018")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "mel_dr10lt", table = "drainage_raster_lookup"))
+write_in_table(pl_con, "mel_dr10lt", "drainage_raster_lookup", drainage_raster_lookup_pl,
+               table_constraint = table_constraint)
 
-gdf <- st_read("Data/AtmDep2022.geojson") |>
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 12) atm_deposition.atmdep2022 -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+gdf <- st_read(paste0(data_path, "AtmosphericDeposition/AtmDep2022.geojson")) |>
   st_transform(2180) |>
   mutate(oid = row_number(),
          shape = geometry)
@@ -502,9 +422,14 @@ gdf <- gdf |> rename(nh4_dry = NH4_dry,
                      shape_area = Shape_Area)|>
   sf::st_drop_geometry() |>
   st_set_geometry("shape") |>
-  select(any_of(names(atmdep2022_lt)))
+  select(any_of(c("oid", "precipitation", "nh4_dry", "nh4_wet", "no3_dry",
+                  "no3_wet", "shape_area", "shape")))
 
-table_constraint_atmdep <- "
+
+atmdep2022_lt <- load_table(lt_con, "atm_deposition", "atmdep2018")
+compare_columns(atmdep2022_lt, gdf)
+
+table_constraint <- "
   oid BIGINT PRIMARY KEY,
   precipitation DOUBLE PRECISION,
   nh4_dry DOUBLE PRECISION,
@@ -515,11 +440,14 @@ table_constraint_atmdep <- "
   shape geometry(Polygon, 2180)
 "
 
-write_in_table(pl_con, "atm_deposition", "atmdep2022", gdf, table_constraint = table_constraint_atmdep)
-##==============================================================================
-buffzones_stat_lt <- load_table(lt_con, "hru", "buffzones_stat")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "atm_deposition", table = "atmdep2022"))
+write_in_table(pl_con, "atm_deposition", "atmdep2022", gdf, table_constraint = table_constraint)
 
-gdf <- st_read("data/Buffer/bufferstrips.shp") |>
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 13) hru.buffzones_stat -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+gdf <- st_read(paste0(data_path, "BufferZones/bufferstrips.shp")) |>
   # 1. Rename standard attributes first
   rename(
     catchmentid = catchmenti,
@@ -528,68 +456,90 @@ gdf <- st_read("data/Buffer/bufferstrips.shp") |>
   st_set_agr("constant") |>
   st_set_geometry("geometry") |>
   rename(shape = geometry) |>
-  select(any_of(names(buffzones_stat_lt)))
+  select(any_of(c("catchmentid", "shape", "shape_area", "shape_length")))
 
-table_constraint_buffer <- "
+# buffzones_stat_lt <- load_table(lt_con, "hru", "buffzones_stat")
+# compare_columns(buffzones_stat_lt, gdf)
+
+table_constraint <- "
   catchmentid BIGINT PRIMARY KEY,
   shape_area DOUBLE PRECISION,
   shape_length DOUBLE PRECISION,
   shape geometry(MultiPolygon, 2180)
 "
 
-write_in_table(pl_con, "hru", "buffzones_stat", gdf, table_constraint = table_constraint_buffer)
-##==============================================================================
-node_elevation_lt <- load_table(lt_con, "hru", "node_elevation")
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "buffzones_stat"))
+write_in_table(pl_con, "hru", "buffzones_stat", gdf, table_constraint = table_constraint)
 
-gdf <- st_read("data/HRU/node_elevation.shp") |>
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 14) hru.node_elevation -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+gdf <- st_read(paste0(data_path, "HRU/node_elevation.shp")) |>
   mutate(node_id = as.integer64(node_id)) |>
   st_set_geometry("shape") |>
-  select(any_of(names(node_elevation_lt )))
+  select(any_of(c("node_id", "shape", "from_dem")))
 
-tablel_constraint_node_elevation <- "
+# node_elevation_lt <- load_table(lt_con, "hru", "node_elevation")
+# compare_columns(node_elevation_lt, gdf)
+
+tablel_constraint<- "
   node_id BIGINT,
   from_dem DOUBLE PRECISION,
   shape geometry(Point, 2180)
 "
 
-write_in_table(pl_con, "hru", "node_elevation", gdf, table_constraint = tablel_constraint_node_elevation)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "node_elevation"))
+write_in_table(pl_con, "hru", "node_elevation", gdf, table_constraint = tablel_constraint)
 
-##==============================================================================
-counties_raster_lookup_lt <- load_table(lt_con, "counties", "counties_raster_lookup")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 15) counties.counties_raster_lookup -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-gdf <- st_read("data/Counties/counties.shp") |>
+gdf <- st_read(paste0(data_path, "Counties/counties.shp")) |>
   mutate(kodas = as.character(kodas),
          raster_id = as.integer64(raster_id)) |>
   st_drop_geometry() |>
-  select(any_of(names(counties_raster_lookup_lt)))
+  select(any_of(c("kodas", "raster_id")))
 
-table_constraint_counties <- "
+# counties_raster_lookup_lt <- load_table(lt_con, "counties", "counties_raster_lookup")
+# compare_columns(counties_raster_lookup_lt, gdf)
+
+table_constraint <- "
   kodas TEXT,
   raster_id BIGINT
 "
-write_in_table(pl_con, "counties", "counties_raster_lookup", gdf, table_constraint = table_constraint_counties)
 
-##==============================================================================
-counties_lt <- load_table(lt_con, "counties", "counties")
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "counties", table = "counties_raster_lookup"))
+write_in_table(pl_con, "counties", "counties_raster_lookup", gdf, table_constraint = table_constraint)
 
-gdf <- st_read("data/Counties/counties.shp") |>
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 16) counties.counties -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+gdf <- st_read(paste0(data_path, "Counties/counties.shp")) |>
   mutate(kodas = as.character(kodas)) |>
   rename(gid = raster_id) |>
   st_set_geometry("shape") |>
   select(gid, kodas, shape)
 
-table_constraint_counties <- "
+# counties_lt <- load_table(lt_con, "counties", "counties")
+# compare_columns(counties_lt, gdf)
+
+table_constraint <- "
   gid BIGINT PRIMARY KEY,
   kodas TEXT,
   shape geometry(MultiPolygon, 2180)
 "
 
-write_in_table(pl_con, "counties", "counties", gdf, table_constraint = table_constraint_counties)
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "counties", table = "counties"))
+write_in_table(pl_con, "counties", "counties", gdf, table_constraint = table_constraint)
 
-##==============================================================================
-bufferstrips_lt <- load_table(lt_con, "bufferstrips", "polygons")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 17) bufferstrips.polygons -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-gdf <- st_read("data/Buffer/bufferstrips.shp") |>
+gdf <- st_read(paste0(data_path, "BufferZones/bufferstrips.shp")) |>
   # 1. Rename standard attributes first
   rename(
     catchmentid = catchmenti,
@@ -598,21 +548,27 @@ gdf <- st_read("data/Buffer/bufferstrips.shp") |>
   st_set_agr("constant") |>
   st_set_geometry("geometry") |>
   rename(shape = geometry) |>
-  select(any_of(names(buffzones_stat_lt)))
+  select(c("catchmentid", "shape", "shape_area", "shape_length"))
 
-table_constraint_buffer <- "
+# bufferstrips_lt <- load_table(lt_con, "bufferstrips", "polygons")
+
+table_constraint <- "
   catchmentid BIGINT PRIMARY KEY,
   shape_area DOUBLE PRECISION,
   shape_length DOUBLE PRECISION,
   shape geometry(MultiPolygon, 2180)
 "
 
-write_in_table(pl_con, "bufferstrips", "polygons", gdf, table_constraint = table_constraint_buffer)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "bufferstrips", table = "polygons"))
+write_in_table(pl_con, "bufferstrips", "polygons", gdf, table_constraint = table_constraint)
 
-##==============================================================================
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 18) fert.plant_data -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 plant_data_lt <- load_table(lt_con, "fert", "plant_data")
 
-table_constraint_plant_data <- "
+table_constraint <- "
   id INTEGER PRIMARY KEY,
   swat_id VARCHAR(10),
   plant_name VARCHAR(255),
@@ -624,13 +580,16 @@ table_constraint_plant_data <- "
   preplant_p DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "fert", "plant_data", plant_data_lt, table_constraint = table_constraint_plant_data)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "fert", table = "plant_data"))
+write_in_table(pl_con, "fert", "plant_data", plant_data_lt, table_constraint = table_constraint)
 
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 19) fert.plants_luclass -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-##==============================================================================
 plants_luclass_lt <- load_table(lt_con, "fert", "plants_luclass")
 
-table_constraint_plants_luclass <- "
+table_constraint <- "
   id INTEGER PRIMARY KEY,
   swat_id VARCHAR(10),
   luclass VARCHAR(100),
@@ -638,16 +597,34 @@ table_constraint_plants_luclass <- "
   plantcode VARCHAR(50)
 "
 
-write_in_table(pl_con, "fert", "plants_luclass", plants_luclass_lt, table_constraint = table_constraint_plants_luclass)
-##==============================================================================
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "fert", table = "plants_luclass"))
+write_in_table(pl_con, "fert", "plants_luclass", plants_luclass_lt,
+               table_constraint = table_constraint)
 
-lakesreservoirs_lt <- load_table(lt_con, "hru", "lakesreservoirs")
-lakesreservoirs_lt_sf <- fix_sf_geometry(lakesreservoirs_lt |> filter(shape_area > 10), "shape", 3346, "Polygon")
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 20) hru.lakesreservoirs -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+lakesreservoirs_pl <- data.frame(
+  lakes_reserv_id = integer(0),
+  catchmentid = integer64(0),
+  shape = character(0),
+  snpl = numeric(0),
+  savl = numeric(0),
+  vnpl = numeric(0),
+  vavl = numeric(0),
+  gylis = numeric(0),
+  totarea = numeric(0),
+  shape_area = numeric(0),
+  segmentid = integer64(0)
+)
+
+# lakesreservoirs_lt <- load_table(lt_con, "hru", "lakesreservoirs")
+# lakesreservoirs_lt_sf <- fix_sf_geometry(lakesreservoirs_lt |> filter(shape_area > 10), "shape", 3346, "Polygon")
 # mapview::mapview(lakesreservoirs_lt_sf)
+# compare_columns(lakesreservoirs_lt, lakesreservoirs_pl)
 
-lakesreservoirs_empty <- lakesreservoirs_lt[0, ]
-
-table_constraint_lakes_reservoirs <- "
+table_constraint <- "
     lakes_reserv_id INTEGER PRIMARY KEY,
     catchmentid BIGINT,
     shape geometry(MultiPolygon, 2180),
@@ -661,29 +638,52 @@ table_constraint_lakes_reservoirs <- "
     segmentid BIGINT
 "
 
-write_in_table(pl_con, "hru", "lakesreservoirs", lakesreservoirs_empty, table_constraint = table_constraint_lakes_reservoirs)
-##==============================================================================
-precip_by_catch_lt <- load_table(lt_con, "hru", "precip_by_catch")
-precip_by_catch_empty <- precip_by_catch_lt[0, ]
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "lakesreservoirs"))
+write_in_table(pl_con, "hru", "lakesreservoirs", lakesreservoirs_pl, table_constraint = table_constraint)
 
-table_constraint_precip_catchment <- "
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 21) hru.precip_by_catch -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+precip_by_catch_pl <- data.frame(
+  catchmentid = integer64(0),
+  raster_id = integer64(0),
+  count = numeric(0),
+  mean = numeric(0))
+
+# precip_by_catch_lt <- load_table(lt_con, "hru", "precip_by_catch")
+
+table_constraint <- "
     catchmentid BIGINT,
     raster_id BIGINT PRIMARY KEY,
     count BIGINT,
     mean DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "hru", "precip_by_catch", precip_by_catch_empty, table_constraint = table_constraint_precip_catchment)
-##==============================================================================
-gri_water_catchments_lt <- load_table(lt_con, "rivers", "gri_water_catchments")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "precip_by_catch"))
+write_in_table(pl_con, "hru", "precip_by_catch", precip_by_catch_pl,
+               table_constraint = table_constraint)
 
-gri_water_catchments_lt_sf <- fix_sf_geometry(gri_water_catchments_lt, "shape", 3346, "Point")
-mapview::mapview(gri_water_catchments_lt_sf)
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 22) rivers.gri_water_catchments -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-gri_water_catchments_empty <- gri_water_catchments_lt[0, ]
-str(gri_water_catchments_lt)
+gri_water_catchments_pl <- data.frame(
+  catchmentid = integer64(0),
+  segmentid = integer64(0),
+  shape = character(0),
+  area = numeric(0),
+  perimeter = numeric(0),
+  width = numeric(0),
+  lwidth = numeric(0)
+)
 
-table_constraint_water_catchments <- "
+# gri_water_catchments_lt <- load_table(lt_con, "rivers", "gri_water_catchments")
+# gri_water_catchments_lt_sf <- fix_sf_geometry(gri_water_catchments_lt, "shape", 3346, "Point")
+# mapview::mapview(gri_water_catchments_lt_sf)
+# compare_columns(gri_water_catchments_lt, gri_water_catchments_pl)
+
+table_constraint <- "
     catchmentid BIGINT PRIMARY KEY,
     segmentid BIGINT,
     shape GEOMETRY(POINT, 2180),
@@ -693,14 +693,28 @@ table_constraint_water_catchments <- "
     lwidth DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "rivers", "gri_water_catchments", gri_water_catchments_empty, table_constraint = table_constraint_water_catchments)
-##==============================================================================
-segment_depth_lt <- load_table(lt_con, "rivers", "segment_depth")
-str(segment_depth_lt)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "rivers", table = "gri_water_catchments"))
+write_in_table(pl_con, "rivers", "gri_water_catchments", gri_water_catchments_pl,
+               table_constraint = table_constraint)
 
-segment_depth_empty <- segment_depth_lt[0, ]
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 23) rivers.segment_depth -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-table_constraint_segment_depth <- "
+segment_depth_pl <- data.frame(
+  count = numeric(0),
+  mean = numeric(0),
+  std = numeric(0),
+  min = numeric(0),
+  max = numeric(0),
+  raster_id = integer(0),
+  catchmentid = integer64(0)
+)
+
+# segment_depth_lt <- load_table(lt_con, "rivers", "segment_depth")
+# compare_columns(segment_depth_lt, segment_depth_pl)
+
+table_constraint <- "
     count DOUBLE PRECISION,
     mean DOUBLE PRECISION,
     std DOUBLE PRECISION,
@@ -709,16 +723,31 @@ table_constraint_segment_depth <- "
     raster_id INTEGER,
     catchmentid BIGINT
 "
-write_in_table(pl_con, "rivers", "segment_depth", segment_depth_empty, table_constraint = table_constraint_segment_depth)
 
-##==============================================================================
-segmentmanningcoef_lt <- load_table(lt_con, "rivers", "segmentmanningcoef")
-segmentmanningcoef_lt_sf <- fix_sf_geometry(segmentmanningcoef_lt, "shape", 3346, "MULTILINESTRING")
-mapview::mapview(segmentmanningcoef_lt_sf)
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "rivers", table = "segment_depth"))
+write_in_table(pl_con, "rivers", "segment_depth", segment_depth_pl,
+               table_constraint = table_constraint)
 
-segmentmanningcoef_empty <- segmentmanningcoef_lt[0, ]
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 24) rivers.segmentmanningcoef -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-table_constraint_segment_manning <- "
+segmentmanningcoef_pl <- data.frame(
+  catchmentid = integer64(0),
+  segmentid = integer64(0),
+  avg_mann = numeric(0),
+  length = numeric(0),
+  n = numeric(0),
+  shape = character(0),
+  rel_length = numeric(0)
+)
+
+# segmentmanningcoef_lt <- load_table(lt_con, "rivers", "segmentmanningcoef")
+# segmentmanningcoef_lt_sf <- fix_sf_geometry(segmentmanningcoef_lt, "shape", 3346, "MULTILINESTRING")
+# mapview::mapview(segmentmanningcoef_lt_sf)
+# compare_columns(segmentmanningcoef_lt, segmentmanningcoef_pl)
+
+table_constraint <- "
     catchmentid BIGINT,
     segmentid BIGINT,
     avg_mann DOUBLE PRECISION,
@@ -727,8 +756,15 @@ table_constraint_segment_manning <- "
     shape GEOMETRY(MULTILINESTRING, 2180),
     rel_length DOUBLE PRECISION
 "
-write_in_table(pl_con, "rivers", "segmentmanningcoef", segmentmanningcoef_empty, table_constraint = table_constraint_segment_manning)
-##==============================================================================
+
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "rivers", table = "segmentmanningcoef"))
+write_in_table(pl_con, "rivers", "segmentmanningcoef", segmentmanningcoef_pl,
+               table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 25) obs.statpcp -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 statpcp_lt <- load_table(lt_con, "obs", "statpcp")
 statpcp_pl <- statpcp_lt |> filter(statid == 8) |>
   st_as_sf(coords = c("xpr", "ypr"), crs = 3346) |>
@@ -741,9 +777,7 @@ statpcp_pl <- statpcp_lt |> filter(statid == 8) |>
   })() |>
   st_drop_geometry()
 
-str(statpcp_pl)
-
-table_constraint_statpcp_pl <- "
+table_constraint <- "
     ogc_fid INTEGER PRIMARY KEY,
     join_count INTEGER,
     target_fid INTEGER,
@@ -757,8 +791,13 @@ table_constraint_statpcp_pl <- "
     ypr DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_constraint_statpcp_pl)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "obs", table = "statpcp"))
+write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 26) hru.catchments_regions -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 catchments_regions_lt <- load_table(lt_con, "hru", "catchments_regions")
 catchments_regions_empty <- catchments_regions_lt[0, ]
 
