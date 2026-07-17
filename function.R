@@ -83,42 +83,100 @@ get_db_info <- function(con, print_info = TRUE){
       table_schema NOT IN ('pg_catalog', 'information_schema')
 ")
 
-  # 6. # Get row counts for all tables
-  row_counts <- dbGetQuery(con, "
-  SELECT table_schema, table_name,
-         (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text::bigint AS row_count
-  FROM information_schema.tables
-  WHERE table_type = 'BASE TABLE'
-    AND table_schema NOT IN ('pg_catalog', 'information_schema');
-")
+  # 6. SAFE row counts
+  message("Counting rows (this may take a while)...")
+
+  row_counts <- data.frame(
+    table_schema = character(),
+    table_name   = character(),
+    row_count    = numeric(),
+    stringsAsFactors = FALSE
+  )
+
+  for (i in seq_len(nrow(tables))) {
+    sch <- tables$table_schema[i]
+    tbl <- tables$table_name[i]
+    full_name <- paste0(sch, ".", tbl)
+
+    # Try a simple, fast estimate first via pg_class (instant, safe)
+    rel_tuple_query <- sprintf("
+      SELECT schemaname, tablename, n_tup_ins - n_tup_del + n_tup_hot_upd AS estimated_rows
+      FROM pg_stat_user_tables
+      WHERE schemaname = %s AND tablename = %s
+    ", dbQuoteLiteral(con, sch), dbQuoteLiteral(con, tbl))
+
+    est <- tryCatch({
+      res <- dbGetQuery(con, rel_tuple_query)
+      if (nrow(res) > 0) res$estimated_rows[1] else NA
+    }, error = function(e) NA)
+
+    # If no stats or zero, fall back to exact count — but wrap in tryCatch
+    if (is.na(est) || est == 0) {
+      count_query <- sprintf("SELECT COUNT(*) FROM %s.%s", dbQuoteIdentifier(con, sch), dbQuoteIdentifier(con, tbl))
+      exact <- tryCatch({
+        dbGetQuery(con, count_query)[1,1]
+      }, error = function(e) {
+        warning(sprintf("Skipping row count for %s (table inaccessible or corrupted: %s)", full_name, e$message))
+        -1  # marker for "failed"
+      })
+      row_count <- if (is.numeric(exact) && exact >= 0) exact else NA
+    } else {
+      row_count <- est
+    }
+
+    row_counts <- rbind(row_counts, data.frame(
+      table_schema = sch,
+      table_name   = tbl,
+      row_count    = as.numeric(row_count),
+      stringsAsFactors = FALSE
+    ))
+
+    # Progress feedback
+    if (i %% 1 == 0 || i == nrow(tables)) {
+      cat(sprintf("\rProcessed %d/%d tables...", i, nrow(tables)))
+    }
+  }
+  cat("\n")
 
   # 7. Merge everything
-  schema_map <- columns |>
-    left_join(nulls, by = c("table_schema", "table_name", "column_name")) |>
-    left_join(constraints, by = c("table_schema", "table_name", "column_name")) |>
-    left_join(row_counts, by = c("table_schema", "table_name")) |>
-    arrange(table_schema, table_name, column_name) |>
-    select(table_schema, table_name, row_count, column_name, data_type, is_nullable, column_default, constraint_type)
 
+  schema_map <- columns %>%
+    left_join(nulls, by = c("table_schema", "table_name", "column_name")) %>%
+    left_join(constraints, by = c("table_schema", "table_name", "column_name")) %>%
+    left_join(row_counts, by = c("table_schema", "table_name")) %>%
+    arrange(table_schema, table_name, column_name) %>%
+    select(table_schema, table_name, row_count, column_name, data_type,
+           is_nullable, column_default, constraint_type)
 
   # 8. collapse multiple constraint types into one column
   schema_map <- schema_map %>%
-    group_by(table_schema, table_name, row_count, column_name, data_type, is_nullable, column_default) %>%
+    group_by(table_schema, table_name, row_count, column_name,
+             data_type, is_nullable, column_default) %>%
     summarise(constraints = paste(unique(constraint_type[!is.na(constraint_type)]), collapse = ", "),
               .groups = "drop")
+
+  # Replace NA row_count with note
+  schema_map$row_count[is.na(schema_map$row_count)] <- -1
+
   # 9. Print summary info if requested
-  if(print_info){
-    for(s in unique(schema_map$table_schema)){
-      cat(paste0("Schema: ", s, " has |> \n"))
-      the_tables <- unique(schema_map$table_name[schema_map$table_schema == s])
-      for(t in the_tables){
-        cat(paste0("  Table: ", t, " has these columns |> ", paste(schema_map$column_name[schema_map$table_name == t & schema_map$table_schema == s], collapse = ", "), " \n"))
+  if (print_info) {
+    for (s in unique(schema_map$table_schema)) {
+      cat(sprintf("\nSchema: %s\n", s))
+      tbls <- schema_map %>% filter(table_schema == s) %>% distinct(table_name, row_count)
+      for (i in seq_len(nrow(tbls))) {
+        t <- tbls$table_name[i]
+        rc <- tbls$row_count[i]
+        rc_text <- if (rc == -1) " [inaccessible]" else paste0(" (", scales::comma(rc), " rows)")
+        cols <- schema_map %>%
+          filter(table_schema == s, table_name == t) %>%
+          pull(column_name)
+        cat(sprintf("  • %s%s: %s\n", t, rc_text, paste(cols, collapse = ", ")))
       }
     }
   }
-  # 10. If no user-defined schemas, inform the user
+
   if (nrow(schema_map) == 0) {
-    message("ⓘ There are no user-defined schemas in the database.")
+    message("No user-defined schemas found.")
   }
 
   return(schema_map)
@@ -185,8 +243,9 @@ write_in_table <- function(con, schema, table, df,
       #   st_as_sf() |>
       #   st_make_valid() |>
       #   mutate(!!sym(colname) := st_cast(st_collection_extract(!!sym(colname)), geom_type))
-
-      df <- fix_sf_geometry(df, geom_col = colname, geom_crs = geom_crs, geom_type = geom_type)
+      if(nrow(df) > 0){
+        df <- fix_sf_geometry(df, geom_col = colname, geom_crs = geom_crs, geom_type = geom_type)
+      }
       # Try to check PostGIS version
       postgis_installed <- TRUE
       tryCatch({

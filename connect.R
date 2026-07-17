@@ -1,9 +1,12 @@
 library(DBI)
 library(mapview)
 library(sf)
-library(dplyr)
+library(tidyverse)
 library(rlang)
 library(rpostgis)
+library(terra)
+library(exactextractr)
+
 source("function.R")
 
 ## Defining SWAT LT database connection
