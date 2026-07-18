@@ -798,43 +798,63 @@ write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_co
 ## 26) hru.catchments_regions -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-catchments_regions_lt <- load_table(lt_con, "hru", "catchments_regions")
-catchments_regions_empty <- catchments_regions_lt[0, ]
+catchments_regions_pl <- data.frame(
+  catchmentid = integer64(0),
+  code = character(0),
+  wshcode = character(0)
+)
 
-table_constraint_catchments_regions <- "
+# catchments_regions_lt <- load_table(lt_con, "hru", "catchments_regions")
+# compare_columns(catchments_regions_lt, catchments_regions_pl)
+
+table_constraint <- "
     catchmentid BIGINT PRIMARY KEY,
     code VARCHAR(50),
     wshcode VARCHAR(50)
 "
 
-write_in_table(pl_con, "hru", "catchments_regions", catchments_regions_empty, table_constraint = table_constraint_catchments_regions)
-##==============================================================================
-point_sources_zero_lt <- load_table(lt_con, "point_sources_zero", "ps_catchment")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "catchments_regions"))
+write_in_table(pl_con, "hru", "catchments_regions", catchments_regions_pl,
+               table_constraint = table_constraint)
 
-point_sources_lt <- load_table(lt_con, "point_sources", "ps_catchment")
-str(point_sources_zero_lt)
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 27) point_sources_zero.ps_catchment ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-table_constraint_point_sources <- "
+point_sources_pl <- data.frame(
+  psid = integer64(0),
+  catchmentid = integer64(0),
+  psname = character(0),
+  shape = structure(character(0), class = "pq_geometry")
+)
+
+# point_sources_lt <- load_table(lt_con, "point_sources", "ps_catchment")
+# point_sources_zero_lt <- load_table(lt_con, "point_sources_zero", "ps_catchment")
+# compare_columns(point_sources_pl, point_sources_zero_lt)
+
+table_constraint <- "
     psid BIGINT PRIMARY KEY,
     catchmentid BIGINT,
     psname TEXT,
     shape GEOMETRY(POINT, 2180)
 "
 
-write_in_table(pl_con, "point_sources_zero", "ps_catchment", point_sources_zero_lt, table_constraint = table_constraint_point_sources)
-##==============================================================================
-management.livestock_data_v2025 <- load_table(lt_con, "management", "livestock_data_v2025")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "point_sources_zero", table = "ps_catchment"))
+write_in_table(pl_con, "point_sources_zero", "ps_catchment", point_sources_pl,
+               table_constraint = table_constraint)
 
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 28) management.livestock_data ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-gdf <- st_read("data/Counties/counties.shp") |>
+gdf <- st_read(paste0(data_path, "Counties/counties.shp")) |>
   mutate(kodas = as.character(kodas),
          raster_id = as.integer(raster_id))
 
-## Load raster
-
-lulc_raster <- rast("data/LU/lugroups.tif")
+## Load raster and calculate livestock units based on agricultural area
+lulc_raster <- rast(paste0(data_path, "LU/lugroups.tif"))
 extracted_data <- exact_extract(lulc_raster, gdf, include_cols = "kodas")
-raster_summary <- bind_rows(extracted_data) |>
+livestock_data_pl <- bind_rows(extracted_data) |>
   group_by(kodas, value) |> # 'value' represents the raster cell values (raster_id)
   summarise(area_pixels = sum(coverage_fraction, na.rm = TRUE), .groups = "drop") |>
   filter (value == 1) |>
@@ -842,39 +862,57 @@ raster_summary <- bind_rows(extracted_data) |>
          livestock_units = 146.2 + (0.2101 * agricultural_area)) |>
   select(kodas, livestock_units, agricultural_area)
 
-table_constraint_management <- "
+# management.livestock_data_v2025 <- load_table(lt_con, "management", "livestock_data_v2025")
+# compare_columns(management.livestock_data_v2025, livestock_data_pl)
+
+table_constraint <- "
     kodas BIGINT PRIMARY KEY,
     livestock_units DOUBLE PRECISION,
     agricultural_area DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "management", "livestock_data", raster_summary, table_constraint = table_constraint_management)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "livestock_data"))
+write_in_table(pl_con, "management", "livestock_data", livestock_data_pl,
+               table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 29) management.yield_data ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+## Load yield data from the legacy database
 management.yield_data_v2025 <- load_table(lt_con, "management", "yield_data_v2025")
 landuse.landuse_swat_raster_lookup <- load_table(pl_con, "landuse", "landuse_swat_raster_lookup")
 
+## Create a data frame with all combinations of swat_id and kodas
 plant_yields <- management.yield_data_v2025 |>
   select(-kodas) |>
   group_by(swat_id) |>
   slice_head(n = 1) |>
   ungroup()
-all_combinations <- gdf["kodas"] |>
-  mutate(kodas = as.integer64(kodas)) |>
+
+plant_yields_pl <- gdf["kodas"] |>
   st_drop_geometry() |>
   cross_join(plant_yields)
 
-table_constraint_yield <- "
-    kodas BIGINT,
+# compare_columns(management.yield_data_v2025, plant_yields_pl)
+
+table_constraint <- "
+    kodas TEXT,
     swat_id TEXT,
     planned_yield DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "management", "yield_data", all_combinations, table_constraint = table_constraint_yield)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "yield_data"))
+write_in_table(pl_con, "management", "yield_data", plant_yields_pl,
+               table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 30) management.plantmng ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 management.plantmng <- load_table(lt_con, "management", "plantmng")
 
-tabel_constraint_plantmng <- "
+table_constraint <- "
     id BIGINT PRIMARY KEY,
     swat_id TEXT,
     opnpk DOUBLE PRECISION,
@@ -885,34 +923,55 @@ tabel_constraint_plantmng <- "
     value_s TEXT
 "
 
-write_in_table(pl_con, "management", "plantmng", management.plantmng, table_constraint = tabel_constraint_plantmng)
-##==============================================================================
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "plantmng"))
+write_in_table(pl_con, "management", "plantmng", management.plantmng,
+               table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 31) hru.fertCoefByCatchm ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 hru.fertCoefByCatchm <- load_table(lt_con, "hru", "fertcoefbycatchm")
-catchmentdata.catchments_coarse <- load_table(pl_con, "catchments", "catchments_coarse", exclude_geom =T)
+
+catchmentdata.catchments_coarse <- load_table(pl_con, "catchments",
+                                              "catchments_coarse", exclude_geom =T)
 df <- data.frame(catchmentid = catchmentdata.catchments_coarse$id, fertcoeff = 1)
 
-tabel_constraint_fertCoefByCatchm  <- "
+# hru.fertCoefByCatchm <- load_table(lt_con, "hru", "fertcoefbycatchm")
+# compare_columns(hru.fertCoefByCatchm, df)
+
+tabel_constraint  <- "
     catchmentid BIGINT PRIMARY KEY,
     fertcoeff DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "hru", "fertcoefbycatchm", df, table_constraint = tabel_constraint_fertCoefByCatchm)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "fertcoefbycatchm"))
+write_in_table(pl_con, "hru", "fertcoefbycatchm", df, table_constraint = tabel_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 32) fert.forest_biomass ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 fert.forest_biomass<- load_table(lt_con, "fert", "forest_biomass")
 
-tabel_constraint_forest_biomass  <- "
+tabel_constraint  <- "
     id BIGINT PRIMARY KEY,
     swat_id TEXT,
     biomass DOUBLE PRECISION
 "
-write_in_table(pl_con, "fert", "forest_biomass", fert.forest_biomass, table_constraint = tabel_constraint_forest_biomass)
-##==============================================================================
-lup.lup_table1 <- load_table(lt_con, "lup", "lup_table1")
+
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "fert", table = "forest_biomass"))
+write_in_table(pl_con, "fert", "forest_biomass", fert.forest_biomass,
+               table_constraint = tabel_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 33) lup.lup_table ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 catchmentdata.catchments_coarse <- load_table(pl_con, "catchments", "catchments") |>
   fix_sf_geometry("shape", 2180, "Polygon")
 
-lulc_raster <- rast("data/LU/lugroups.tif")
+lulc_raster <- rast(paste0(data_path, "LU/lugroups.tif"))
 extracted_data <- exact_extract(lulc_raster, catchmentdata.catchments_coarse, include_cols = "catchmentid")
 raster_summary <- bind_rows(extracted_data) |>
   group_by(catchmentid, value) |> # 'value' represents the raster cell values (raster_id)
@@ -932,9 +991,14 @@ lup.lup_table1_pl <- raster_summary |>
     names_from = luclass,
     values_from = area_m2
   ) |>
-  select(names(lup.lup_table1))
+  select(c("catchmentid","agricultural","barren","forest","pasture","urban",
+    "water","wetland"
+  ))
 
-table_constraint_lup_table1  <- "
+# lup.lup_table1 <- load_table(lt_con, "lup", "lup_table1")
+# compare_columns(lup.lup_table1, lup.lup_table1_pl)
+
+table_constraint <- "
     catchmentid BIGINT PRIMARY KEY,
     agricultural DOUBLE PRECISION,
     barren DOUBLE PRECISION,
@@ -945,13 +1009,18 @@ table_constraint_lup_table1  <- "
     wetland DOUBLE PRECISION
 "
 
-write_in_table(pl_con, "lup", "lup_table1", lup.lup_table1_pl, table_constraint = table_constraint_lup_table1)
-write_in_table(pl_con, "lup", "lup_table2", lup.lup_table1_pl, table_constraint = table_constraint_lup_table1)
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "lup", table = "lup_table1"))
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "lup", table = "lup_table2"))
+write_in_table(pl_con, "lup", "lup_table1", lup.lup_table1_pl, table_constraint = table_constraint)
+write_in_table(pl_con, "lup", "lup_table2", lup.lup_table1_pl, table_constraint = table_constraint)
 
-##==============================================================================
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 34) management.plant_plt ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 plant_plt <- load_table(lt_con, "management", "plant_plt")
 
-table_constraints_plant_plt  <- "
+table_constraints  <- "
     index BIGINT PRIMARY KEY,
     id BIGINT,
     name TEXT,
@@ -1010,11 +1079,16 @@ table_constraints_plant_plt  <- "
     description TEXT
 "
 
-write_in_table(pl_con, "management", "plant_plt", plant_plt, table_constraint = table_constraints_plant_plt)
-##==============================================================================
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "plant_plt"))
+write_in_table(pl_con, "management", "plant_plt", plant_plt, table_constraint = table_constraints)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 35) management.urban_urb ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 urban_urb <- load_table(lt_con, "management", "urban_urb")
 
-table_constraint_urban_urb  <- "
+table_constraint <- "
     index BIGINT PRIMARY KEY,
     id BIGINT,
     name TEXT,
@@ -1031,12 +1105,16 @@ table_constraint_urban_urb  <- "
     description TEXT
 "
 
-write_in_table(pl_con, "management", "urban_urb", urban_urb, table_constraint = table_constraint_urban_urb)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "urban_urb"))
+write_in_table(pl_con, "management", "urban_urb", urban_urb, table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 36) management.cntable_lum ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 cntable_lum <- load_table(lt_con, "management", "cntable_lum")
 
-table_constraint_cntable_lum  <- "
+table_constraint  <- "
     index BIGINT PRIMARY KEY,
     id BIGINT,
     name TEXT,
@@ -1049,11 +1127,32 @@ table_constraint_cntable_lum  <- "
     cond_cov TEXT
 "
 
-write_in_table(pl_con, "management", "cntable_lum", cntable_lum, table_constraint = table_constraint_cntable_lum)
-##==============================================================================
-small_catch <- load_table(lt_con, "point_sources_zero", "small_catch")
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "cntable_lum"))
+write_in_table(pl_con, "management", "cntable_lum", cntable_lum, table_constraint = table_constraint)
 
-table_constraint_small_catch  <- "
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 37) point_sources_zero.small_catch ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+small_catch_pl <- data.frame(
+  id = integer64(0),
+  year = integer64(0),
+  name = character(0),
+  type = integer64(0),
+  nutrient = character(0),
+  concentration = numeric(0),
+  unit = character(0),
+  discharge = numeric(0),
+  y = numeric(0),
+  x = numeric(0),
+  catchmentid = integer64(0),
+  shape = structure(character(0), class = "pq_geometry")
+)
+
+# small_catch <- load_table(lt_con, "point_sources_zero", "small_catch")
+# compare_columns(small_catch, small_catch_pl)
+
+table_constraint  <- "
     id BIGINT PRIMARY KEY,
     year BIGINT,
     name TEXT,
@@ -1068,26 +1167,24 @@ table_constraint_small_catch  <- "
     shape GEOMETRY(POINT, 2180)
 "
 
-write_in_table(pl_con, "point_sources_zero", "small_catch", small_catch, table_constraint = table_constraint_small_catch)
-##==============================================================================
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "point_sources_zero", table = "small_catch"))
+write_in_table(pl_con, "point_sources_zero", "small_catch", small_catch,
+               table_constraint = table_constraint)
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 38) management.landuse_properties ------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 landuse_properties <- load_table(lt_con, "management", "landuse_properties")
 
-table_constraint_landuse_properties  <- "
+table_constraint  <- "
     swat_id TEXT PRIMARY KEY,
     ov_mann_name TEXT,
     cons_prac_name TEXT
 "
-write_in_table(pl_con, "management", "landuse_properties", landuse_properties, table_constraint = table_constraint_landuse_properties)
-##==============================================================================
-landuse_properties <- load_table(lt_con, "nutrients_sol", "landuse_properties")
 
-
-
-
-
-
-
-
-DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "yield_data"))
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "management", table = "landuse_properties"))
+write_in_table(pl_con, "management", "landuse_properties", landuse_properties,
+               table_constraint = table_constraint)
 
 
