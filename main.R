@@ -255,11 +255,52 @@ write_in_table(pl_con, "landuse", "landusegroup_raster_lookup",
 ## 9) soil.soil_swat_raster_lookup -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-soil_pl_lookup <- read.csv(paste0(data_path, "soil/Lookup_soil.csv"), header = TRUE)
+## Prepare the soil data with the same structure as the LT table from the raw
+## data supplied by Ignacy.
+# soil <- sf::read_sf(paste0(data_path, "Soil/soil100th_1_catchent/soil100th_1_catchent.shp")) |>
+#   group_by(Aggreg1) |>
+#   summarise() |>
+#   arrange(Aggreg1) |>
+#   mutate(raster_id = row_number())
+#
+# library(terra)
+# r_template <- rast(paste0(data_path, "DEM/dem.tif"))
+# r_rasterized <- rasterize(soil, r_template, field = "raster_id")
+# writeRaster(r_rasterized, paste0(data_path, "Soil/soil100th_v1.tif"),
+#             datatype = "INT1U", gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2"), overwrite = TRUE)
+#
+# soil_link <- soil |>
+#   st_drop_geometry() |>
+#   rename(swatcode = Aggreg1)
+#
+# library(readxl)
+# soil_data <- readxl::read_excel(paste0(data_path, "Soil/soil100th_1_catchent/final_usersoil_PL.xlsx"))
+# soil_lookup_lookup <- left_join(soil_link, soil_data, by = c("swatcode" = "snam")) |>
+#   rename(id = raster_id,
+#          snam = swatcode) |>
+#   select(all_of(c(
+#     "nlayers", "snam", "hydgrp", "anion_excl", "sol_zmx", "sol_crk", "sol_bd1", "sol_z1", "sol_awc1", "sol_cbn1", "sol_k1",
+#     "clay1", "sand1", "silt1", "rock1", "sol_alb1", "sol_ec1", "usle_k1", "sol_bd2", "sol_z2", "sol_awc2", "sol_cbn2",
+#     "sol_k2", "clay2", "sand2", "silt2", "rock2", "sol_ec2", "usle_k2", "sol_bd3", "sol_z3", "sol_awc3", "sol_cbn3",
+#     "sol_k3", "clay3", "sand3", "silt3", "rock3", "sol_ec3", "usle_k3", "sol_no31", "sol_no32", "sol_no33", "sol_orgn1",
+#     "sol_orgn2", "sol_labp1", "sol_orgn3", "sol_labp2", "sol_labp3", "sol_orgp1", "sol_orgp2", "prerco_sub", "sol_orgp3", "sol_alb2", "sol_ph1",
+#     "id", "sol_alb3"
+#   ))) |>
+#   mutate(snam = ifelse(is.na(snam), "JEZ", snam)) |>
+#   mutate(across(where(is.integer), as.numeric))
+#
+# unique(soil_lookup_lookup$snam)[!soil_lookup_lookup$snam %in% unique(soil_link$swatcode)]
+# unique(soil_link$swatcode)[!unique(soil_link$swatcode) %in% soil_lookup_lookup$snam]
+#
+# write.csv(soil_lookup_lookup, paste0(data_path, "Soil/Lookup_soil.csv"), row.names = FALSE)
+
+## Load the soil lookup table and prepare it for insertion into the PL database
+soil_pl_lookup <- read.csv(paste0(data_path, "soil/Lookup_soil.csv"), header = TRUE) |>
+  mutate(across(where(is.integer), as.numeric))|>
+  mutate(id = as.integer(id))
 
 soil_swat_raster_lookup_pl <- soil_pl_lookup |>
-  rename(swatcode = SNAM,
-         raster_id = soilRastID) |>
+  rename(swatcode = snam, raster_id = id) |>
   mutate(raster_id = as.integer64(raster_id)) |>
   select(swatcode, raster_id)
 
@@ -279,44 +320,8 @@ write_in_table(pl_con, "soil", "soil_swat_raster_lookup", soil_swat_raster_looku
 ## 10) swat2012.usersoilpl -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-usersoil_pl <- soil_pl_lookup |>
-  rename_with(tolower) |>
-  select(-c("soilrastid", "muid", "seqn", "s5id", "cmppct")) |>
-  filter(!is.na(nlayers)) |>
-  mutate(sol_ec3    = 0,
-         sol_no31   = 12.39735,
-         sol_no32   = 4.677668,
-         sol_no33   = 2.612997,
-         sol_orgn1  = 1239.744,
-         sol_orgn2  = 467.7761,
-         sol_orgn3  = 261.2997,
-         sol_labp1  = 89.91165,
-         sol_labp2  = 240.161,
-         sol_labp3  = 159.7698,
-         sol_orgp1  = 344.6786,
-         sol_orgp2  = 240.161,
-         sol_orgp3  = 263.3669,
-         prerco_sub = 10,
-         sol_ph1    = 5.238372) |>
-  bind_rows(usersoil_lt |> filter(snam=="W") |> mutate(snam = "water") |> select(-id)) |>
-  mutate(id = row_number()) |>
-  select(any_of(c(
-    "nlayers", "snam", "hydgrp", "anion_excl", "sol_zmx", "sol_crk", "sol_bd1", "sol_z1", "sol_awc1", "sol_cbn1", "sol_k1",
-    "clay1", "sand1", "silt1", "rock1", "sol_alb1", "sol_ec1", "usle_k1", "sol_bd2", "sol_z2", "sol_awc2", "sol_cbn2",
-    "sol_k2", "clay2", "sand2", "silt2", "rock2", "sol_ec2", "usle_k2", "sol_bd3", "sol_z3", "sol_awc3", "sol_cbn3",
-    "sol_k3", "clay3", "sand3", "silt3", "rock3", "sol_ec3", "usle_k3", "sol_no31", "sol_no32", "sol_no33", "sol_orgn1",
-    "sol_orgn2", "sol_labp1", "sol_orgn3", "sol_labp2", "sol_labp3", "sol_orgp1", "sol_orgp2", "prerco_sub", "sol_orgp3", "sol_alb2", "sol_ph1",
-    "id", "sol_alb3"
-  )))|>
-  mutate(across(where(is.integer), as.numeric))|>
-  mutate(id = as.integer(id)) |>
-  group_by(snam) |>
-  slice(1) |>
-  ungroup()
-
-
 # usersoil_lt <- load_table(lt_con, "swat2012", "usersoillt")
-# compare_columns(usersoil_lt, usersoil_pl)
+# compare_columns(usersoil_lt, soil_pl_lookup)
 # names(usersoil_lt)[!names(usersoil_lt) %in% names(usersoil_pl)]
 # names(usersoil_pl)[!names(usersoil_pl) %in% names(usersoil_lt)]
 
@@ -381,7 +386,7 @@ table_constraint <- "
 "
 
 DBI::dbRemoveTable(pl_con, DBI::Id(schema = "swat2012", table = "usersoilpl"))
-write_in_table(pl_con, "swat2012", "usersoilpl", usersoil_pl, table_constraint = table_constraint)
+write_in_table(pl_con, "swat2012", "usersoilpl", soil_pl_lookup, table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 ## 11) mel_dr10lt.drainage_raster_lookup -----
