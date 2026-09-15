@@ -396,3 +396,9 @@ compare_columns <- function(df1, df2) {
   }
 }
 
+## Function to shorter catch ids
+replace_with_lookup <- function(x) {
+  m <- match(x, lookup_tbl$old_id)
+  ifelse(is.na(x), x, lookup_tbl$new_id[m])
+}
+

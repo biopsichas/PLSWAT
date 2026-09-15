@@ -47,6 +47,14 @@ catchments_pl <- st_read(paste0(data_path, "Catchments/WatershedsPL_corrected2.s
     "inletid", "x", "y", "lon", "lat", "area"
   )))
 
+## Converting ids from long to short
+all_ids <- unique(catchments_pl$catchmentid) |> sort()
+lookup_tbl <- tibble(old_id = c(all_ids, -1), new_id = c(seq_along(all_ids), -1))
+
+id_cols <- c("catchmentid", "segmentid", "flowto", "segmentto")
+catchments_pl <- catchments_pl |>
+  mutate(across(all_of(id_cols), ~ as.integer64(replace_with_lookup(.x))))
+
 # catchments_lt <- load_table(lt_con, "catchments", "catchments")
 # compare_columns(catchments_lt, catchments_pl)
 
@@ -73,7 +81,7 @@ table_constraint <- "
   area DOUBLE PRECISION
 "
 
-# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchments"))
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchments"))
 write_in_table(pl_con, "catchments", "catchments", catchments_pl, table_constraint = table_constraint)
 
 
@@ -102,8 +110,14 @@ rivers_pl <- st_read(paste0(data_path, "Catchments/RiversPLcorrected.shp"), quie
     "nodeto"
   )))
 
-rivers_pl <- load_table(pl_con, "catchments", "riversegments")
-compare_columns(rivers_lt, rivers_pl)
+id_cols <- c("segmentid", "flowto", "nodefrom", "nodeto")
+
+rivers_pl <- rivers_pl |>
+  mutate(across(all_of(id_cols), ~ replace_with_lookup(.x))) |>
+  mutate(across(all_of(c("segmentid", "flowto")),~ as.integer64(.x)))
+
+# rivers_pl <- load_table(pl_con, "catchments", "riversegments")
+# compare_columns(rivers_lt, rivers_pl)
 
 table_constraint <- "
   segmentid BIGINT PRIMARY KEY,
@@ -163,7 +177,7 @@ table_constraint <- "
   composite TEXT
 "
 
-# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "watersheds"))
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "watersheds"))
 write_in_table(pl_con, "catchments", "watersheds", watersheds_pl, table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -176,12 +190,15 @@ catchm_wshed_pl <- read.csv(paste0(data_path, "Catchments/catchm_wshed.csv"), he
          watershedid = as.integer64(wshid)) |>
   select(-wshid)
 
+catchm_wshed_pl <- catchm_wshed_pl |>
+  mutate(across(all_of("catchmentid"), ~ as.integer64(replace_with_lookup(.x))))
+
 table_constraint <- "
   catchmentid BIGINT,
   watershedid BIGINT
 "
 
-# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchm_wshed"))
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "catchments", table = "catchm_wshed"))
 write_in_table(pl_con, "catchments", "catchm_wshed", catchm_wshed_pl, table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -686,11 +703,24 @@ write_in_table(pl_con, "hru", "lakesreservoirs", lakesreservoirs_pl, table_const
 ## 21) hru.precip_by_catch -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-precip_by_catch_pl <- data.frame(
-  catchmentid = integer64(0),
-  raster_id = integer64(0),
-  count = numeric(0),
-  mean = numeric(0))
+# precip_by_catch_pl <- data.frame(
+#   catchmentid = integer64(0),
+#   raster_id = integer64(0),
+#   count = numeric(0),
+#   mean = numeric(0))
+
+pcp_rast <- rast(paste0(data_path, "Meteo/pcp_avg1997_2020.tif"))
+catchments_pl_proj <- st_transform(catchments_pl, crs(pcp_rast))
+precip_by_catch_pl <- exact_extract(
+  pcp_rast,
+  catchments_pl_proj,
+  fun      = c("count", "mean"),
+  append_cols = "catchmentid"   # pulls catchmentid from the sf object
+) |>
+  mutate(raster_id = row_number()) |>
+  select(catchmentid, raster_id, count, mean) |>
+  mutate(raster_id = as.integer64(raster_id),
+         count = as.integer(count))
 
 # precip_by_catch_lt <- load_table(lt_con, "hru", "precip_by_catch")
 # compare_columns(precip_by_catch_lt, precip_by_catch_pl)
