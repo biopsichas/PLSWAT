@@ -663,19 +663,48 @@ write_in_table(pl_con, "fert", "plants_luclass", plants_luclass_lt,
 ## 20) hru.lakesreservoirs -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-lakesreservoirs_pl <- data.frame(
-  lakes_reserv_id = integer(0),
-  catchmentid = integer64(0),
-  shape = character(0),
-  snpl = numeric(0),
-  savl = numeric(0),
-  vnpl = numeric(0),
-  vavl = numeric(0),
-  gylis = numeric(0),
-  totarea = numeric(0),
-  shape_area = numeric(0),
-  segmentid = integer64(0)
-)
+lakesreservoirs_pl <- st_read(paste0(data_path, "Lakes/lakesReserv.shp")) |>
+  st_transform(2180) |>
+  rename(
+    shape = geometry,
+    shape_area = Shape_Area
+  ) |>
+  mutate(lakes_reserv_id = row_number()) |>
+  # 1. Spatial join to get catchmentid safely
+  st_join(catchments_pl |> select(catchmentid), join = st_intersects, left = TRUE)|>
+  group_by(lakes_reserv_id) |>
+  slice(1) |>
+  ungroup() |>
+  filter(!is.na(catchmentid)) |>
+  # 2. Spatial join to get segmentid safely
+  st_join(rivers_pl |> select(segmentid), join = st_intersects, left = TRUE) |>
+  group_by(lakes_reserv_id) |>
+  slice(1) |>
+  ungroup() |>
+  # 3. Select final columns in order
+  select(lakes_reserv_id, catchmentid, shape, snpl, savl, vnpl, vavl, gylis,
+         totarea, shape_area, segmentid)
+
+# mapview(catchments_pl, col.regions = "lightgray", alpha.regions = 0.3, layer.name = "Catchments") +
+#   mapview(rivers_pl, color = "blue", lwd = 1.5, layer.name = "Rivers (Segment ID)") +
+#   mapview(lakesreservoirs_pl, col.regions = "red", layer.name = "Lakes (Reservoirs)")
+
+lakerseservoirs_pl <- lakesreservoirs_pl |>
+  mutate(across(c("catchmentid", "segmentid"), as.integer64))
+
+# lakesreservoirs_pl <- data.frame(
+#   lakes_reserv_id = integer(0),
+#   catchmentid = integer64(0),
+#   shape = character(0),
+#   snpl = numeric(0),
+#   savl = numeric(0),
+#   vnpl = numeric(0),
+#   vavl = numeric(0),
+#   gylis = numeric(0),
+#   totarea = numeric(0),
+#   shape_area = numeric(0),
+#   segmentid = integer64(0)
+# )
 
 # lakesreservoirs_lt <- load_table(lt_con, "hru", "lakesreservoirs")
 # lakesreservoirs_lt_sf <- fix_sf_geometry(lakesreservoirs_lt |> filter(shape_area > 10), "shape", 3346, "Polygon")
@@ -696,7 +725,7 @@ table_constraint <- "
     segmentid BIGINT
 "
 
-# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "lakesreservoirs"))
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "lakesreservoirs"))
 write_in_table(pl_con, "hru", "lakesreservoirs", lakesreservoirs_pl, table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
