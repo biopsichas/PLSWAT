@@ -1289,3 +1289,82 @@ write_in_table(pl_con, "management", "landuse_properties", landuse_properties,
                table_constraint = table_constraint)
 
 
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 39) weather data (wgn.txt, wgn.sta generation)------
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+# Read station metadata
+sta <- read.delim(paste0(data_path, "Meteo/finalForSWAT/weatherdata.sta"), sep = "\t")
+# Columns: ID, Name, Lon, Lat  (coordinates in EPSG:2180)
+
+filter_out <- c(9, 11, 14,23) # Too far
+
+stations_sf <- sta |>
+  mutate(Elevation = 0) |>          # elevation not in your data → set to 0
+  st_as_sf(coords = c("Lon", "Lat"), crs = 2180) |>
+  filter(!ID %in% filter_out) |>
+  mutate(ID = paste0("ID", ID))
+
+# mapview::mapview(stations_sf)
+
+# Read daily weather data
+# Skip the units row (row 2 in the file)
+txt <- read.delim(
+  paste0(data_path, "Meteo/finalForSWAT/weatherdata.txt"),
+  sep      = "\t",
+  skip     = 1,                     # skip units row
+  col.names = c("Station", "DATE", "T", "TMP_MIN", "TMP_MAX",
+                "PCP", "WNDSPD", "RELHUM", "SLR")
+) |>
+  mutate(DATE = as.Date(DATE, format = "%Y.%m.%d")) |>
+  select(-T)  |> # mean T not needed by prepare_wgn
+  filter(!Station %in% filter_out) |>
+  mutate(Station = paste0("ID", Station))
+
+# Build meteo_lst$data
+# Structure: named list of stations → named list of per-variable dataframes
+vars <- c("TMP_MAX", "TMP_MIN", "PCP", "RELHUM", "WNDSPD", "SLR")
+
+data_list <- split(txt, txt$Station) |>
+  lapply(function(df_st) {
+    var_list <- lapply(setNames(vars, vars), function(v) {
+      df_st[, c("DATE", v)]
+    })
+    # Drop variables that are entirely NA — prepare_wgn will fill from nearest station
+    var_list[sapply(var_list, function(df) !all(is.na(df[[2]])))]
+  })
+
+# Assemble and run
+meteo_lst <- list(data = data_list, stations = stations_sf)
+wgn_result <- prepare_wgn(meteo_lst)
+
+
+output_path <- paste0(data_path, "Meteo/finalForSWAT/")
+# Write wgn.sta
+wgn_result$wgn_st |>
+  select(id = ID, name = NAME, lat = LAT, lon = LONG, elev = ELEVATION, rain_yrs = RAIN_YRS) |>
+  mutate(name = iconv(name, to = "ASCII//TRANSLIT")) |>
+  write.table(
+    paste0(output_path, "wgn.sta"),
+    sep       = "\t",
+    row.names = FALSE,
+    quote     = FALSE
+  )
+
+# Write wgn.txt
+wgn_result$wgn_data |>
+  select(-id) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  write.table(
+    paste0(output_path, "wgn.txt"),
+    sep       = "\t",
+    row.names = FALSE,
+    quote     = FALSE
+  )
+
+wgn_result$wgn_data |>
+  filter(if_any(everything(), is.na))
+
+sta <- read.delim(paste0(data_path, "Meteo/finalForSWAT/weatherdata.sta"), sep = "\t")
+sta$Name <- iconv(sta$Name, to = "ASCII//TRANSLIT")
+write.table(sta, paste0(output_path, "weatherdata.sta"), sep = "\t", row.names = FALSE, quote = FALSE)

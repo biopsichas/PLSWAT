@@ -6,6 +6,7 @@ library(rlang)
 library(rpostgis)
 library(terra)
 library(exactextractr)
+library(SWATprepR)
 
 source("function.R")
 
