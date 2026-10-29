@@ -55,6 +55,14 @@ id_cols <- c("catchmentid", "segmentid", "flowto", "segmentto")
 catchments_pl <- catchments_pl |>
   mutate(across(all_of(id_cols), ~ as.integer64(replace_with_lookup(.x))))
 
+write.table(
+  catchments_pl |> st_drop_geometry(),
+  file = "catchments_pl",
+  sep = "\t",        # Use "\t" for tab-separated, or "," for comma-separated
+  row.names = FALSE, # Set to TRUE if you want to include row numbers
+  quote = FALSE      # Set to FALSE to remove quotation marks around text
+)
+
 # catchments_lt <- load_table(lt_con, "catchments", "catchments")
 # compare_columns(catchments_lt, catchments_pl)
 
@@ -863,39 +871,6 @@ write_in_table(pl_con, "rivers", "segmentmanningcoef", segmentmanningcoef_pl,
                table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-## 25) obs.statpcp -----
-## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-statpcp_lt <- load_table(lt_con, "obs", "statpcp")
-statpcp_pl <- statpcp_lt |> filter(statid == 8) |>
-  st_as_sf(coords = c("xpr", "ypr"), crs = 3346) |>
-  st_transform(2180) |>
-  (\(d) {
-    coords <- st_coordinates(d)
-    d$xpr <- coords[, 1]
-    d$ypr <- coords[, 2]
-    return(d)
-  })() |>
-  st_drop_geometry()
-
-table_constraint <- "
-    ogc_fid INTEGER PRIMARY KEY,
-    join_count INTEGER,
-    target_fid INTEGER,
-    statid INTEGER,
-    statname VARCHAR(100),
-    precip DOUBLE PRECISION,
-    id INTEGER,
-    name VARCHAR(50),
-    elevation DOUBLE PRECISION,
-    xpr DOUBLE PRECISION,
-    ypr DOUBLE PRECISION
-"
-
-# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "obs", table = "statpcp"))
-write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_constraint)
-
-## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 ## 26) hru.catchments_regions -----
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -1319,7 +1294,8 @@ txt <- read.delim(
   mutate(DATE = as.Date(DATE, format = "%Y.%m.%d")) |>
   select(-T)  |> # mean T not needed by prepare_wgn
   filter(!Station %in% filter_out) |>
-  mutate(Station = paste0("ID", Station))
+  mutate(Station = paste0("ID", Station)) |>
+  mutate(RELHUM = ifelse(RELHUM > 1, RELHUM/100, RELHUM)) # Cap relative humidity at 100%)
 
 # Build meteo_lst$data
 # Structure: named list of stations → named list of per-variable dataframes
@@ -1343,7 +1319,10 @@ output_path <- paste0(data_path, "Meteo/finalForSWAT/")
 # Write wgn.sta
 wgn_result$wgn_st |>
   select(id = ID, name = NAME, lat = LAT, lon = LONG, elev = ELEVATION, rain_yrs = RAIN_YRS) |>
-  mutate(name = iconv(name, to = "ASCII//TRANSLIT")) |>
+  mutate(name = iconv(name, to = "ASCII//TRANSLIT"),
+         id_num = as.integer(sub("ID", "", id))) |>
+  arrange(id_num) |>
+  select(-id_num) |>
   write.table(
     paste0(output_path, "wgn.sta"),
     sep       = "\t",
@@ -1355,6 +1334,7 @@ wgn_result$wgn_st |>
 wgn_result$wgn_data |>
   select(-id) |>
   mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+  arrange(wgn_id) |>
   write.table(
     paste0(output_path, "wgn.txt"),
     sep       = "\t",
@@ -1365,6 +1345,81 @@ wgn_result$wgn_data |>
 wgn_result$wgn_data |>
   filter(if_any(everything(), is.na))
 
-sta <- read.delim(paste0(data_path, "Meteo/finalForSWAT/weatherdata.sta"), sep = "\t")
-sta$Name <- iconv(sta$Name, to = "ASCII//TRANSLIT")
-write.table(sta, paste0(output_path, "weatherdata.sta"), sep = "\t", row.names = FALSE, quote = FALSE)
+sta |>
+  filter(!ID %in% filter_out) |>
+  mutate(Name = iconv(Name, to = "ASCII//TRANSLIT")) |>
+  write.table(paste0(output_path, "weatherdata_new.sta"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+raw_lines <- readLines(paste0(data_path, "Meteo/finalForSWAT/weatherdata.txt"))
+
+filtered_lines <- c(
+  raw_lines[1:2],  # header + units rows
+  raw_lines[-(1:2)][!as.integer(sub("\t.*", "", raw_lines[-(1:2)])) %in% filter_out]
+)
+
+writeLines(filtered_lines, paste0(output_path, "weatherdata_new.txt"))
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## 25) obs.statpcp -----
+## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+statpcp_lt <- load_table(lt_con, "obs", "statpcp")
+
+# Compute mean annual precipitation per station
+annual_pcp <- txt |>
+  filter(!is.na(PCP)) |>
+  mutate(year = format(DATE, "%Y"),
+         ID   = as.integer(sub("ID", "", Station))) |>
+  group_by(ID, year) |>
+  summarise(annual = sum(PCP, na.rm = TRUE), .groups = "drop") |>
+  group_by(ID) |>
+  summarise(precip = round(mean(annual), 2), .groups = "drop")
+
+# Build statpcp_pl — all 20 active stations, join_count = 1
+statpcp_pl <- sta |>
+  filter(!ID %in% filter_out) |>
+  arrange(ID) |>
+  left_join(annual_pcp, by = "ID") |>
+  mutate(
+    ogc_fid    = row_number(),
+    join_count = 1L,
+    target_fid = row_number() - 1L,
+    statid     = row_number(),
+    statname   = Name,
+    id         = row_number(),
+    name       = sprintf("pcp%02d", row_number()),  # pcp01, pcp02...
+    elevation  = 0.0,
+    xpr        = Lon,   # EPSG:2180
+    ypr        = Lat
+  ) |>
+  select(ogc_fid, join_count, target_fid, statid, statname,
+         precip, id, name, xpr, ypr, elevation)
+
+# statpcp_pl <- statpcp_lt |> filter(statid == 8) |>
+#   st_as_sf(coords = c("xpr", "ypr"), crs = 3346) |>
+#   st_transform(2180) |>
+#   (\(d) {
+#     coords <- st_coordinates(d)
+#     d$xpr <- coords[, 1]
+#     d$ypr <- coords[, 2]
+#     return(d)
+#   })() |>
+#   st_drop_geometry()
+
+table_constraint <- "
+    ogc_fid INTEGER PRIMARY KEY,
+    join_count INTEGER,
+    target_fid INTEGER,
+    statid INTEGER,
+    statname VARCHAR(100),
+    precip DOUBLE PRECISION,
+    id INTEGER,
+    name VARCHAR(50),
+    elevation DOUBLE PRECISION,
+    xpr DOUBLE PRECISION,
+    ypr DOUBLE PRECISION
+"
+
+DBI::dbRemoveTable(pl_con, DBI::Id(schema = "obs", table = "statpcp"))
+write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_constraint)
+
