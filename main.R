@@ -689,15 +689,17 @@ lakesreservoirs_pl <- st_read(paste0(data_path, "Lakes/lakesReserv.shp")) |>
   group_by(lakes_reserv_id) |>
   slice(1) |>
   ungroup() |>
-  # 3. Select final columns in order
+  mutate(
+    vnpl = snpl * 10 * gylis,   # recalculate normal pool volume
+  ) |>
   select(lakes_reserv_id, catchmentid, shape, snpl, savl, vnpl, vavl, gylis,
          totarea, shape_area, segmentid)
 
 # mapview(catchments_pl, col.regions = "lightgray", alpha.regions = 0.3, layer.name = "Catchments") +
-#   mapview(rivers_pl, color = "blue", lwd = 1.5, layer.name = "Rivers (Segment ID)") +
-#   mapview(lakesreservoirs_pl, col.regions = "red", layer.name = "Lakes (Reservoirs)")
+# mapview(rivers_pl, color = "blue", lwd = 1.5, layer.name = "Rivers (Segment ID)") +
+# mapview(lakesreservoirs_pl, color = "red", lwd = 1.5, layer.name = "Lakes/Reservoirs (ID)")
 
-lakerseservoirs_pl <- lakesreservoirs_pl |>
+lakesreservoirs_pl <- lakesreservoirs_pl |>
   mutate(across(c("catchmentid", "segmentid"), as.integer64))
 
 # lakesreservoirs_pl <- data.frame(
@@ -714,7 +716,6 @@ lakerseservoirs_pl <- lakesreservoirs_pl |>
 #   segmentid = integer64(0)
 # )
 
-# lakesreservoirs_lt <- load_table(lt_con, "hru", "lakesreservoirs")
 # lakesreservoirs_lt_sf <- fix_sf_geometry(lakesreservoirs_lt |> filter(shape_area > 10), "shape", 3346, "Polygon")
 # mapview::mapview(lakesreservoirs_lt_sf)
 # compare_columns(lakesreservoirs_lt, lakesreservoirs_pl)
@@ -733,7 +734,7 @@ table_constraint <- "
     segmentid BIGINT
 "
 
-DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "lakesreservoirs"))
+# DBI::dbRemoveTable(pl_con, DBI::Id(schema = "hru", table = "lakesreservoirs"))
 write_in_table(pl_con, "hru", "lakesreservoirs", lakesreservoirs_pl, table_constraint = table_constraint)
 
 ## >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -1422,4 +1423,3 @@ table_constraint <- "
 
 DBI::dbRemoveTable(pl_con, DBI::Id(schema = "obs", table = "statpcp"))
 write_in_table(pl_con, "obs", "statpcp", statpcp_pl, table_constraint = table_constraint)
-
