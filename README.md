@@ -17,7 +17,19 @@
 
 ## Project Overview
 
+![Study area watersheds — Czarna Hańcza, Marycha, Szeszupa and surrounding catchments in NE Poland](map.jpg)
+
 **PLSWAT** is a comprehensive river modeling repository designed to automate the generation, population, and execution of **SWAT+** modeling setups for Nemunas basin in Poland (~2000 km²). It is an adaptation of the **LTSWAT** (Lithuanian River Modeling System, [GitHub](https://github.com/biopsichas/LTSWAT) & [Documentation](https://doi.org/10.5281/zenodo.11092543)), using standardized workflows to ensure consistent water quality and quantity modeling — particularly in transboundary catchments.
+
+The repository currently supports **5 SWAT+ model setups** for the following watersheds:
+
+| Watershed | Description |
+| --- | --- |
+| **Czarna Hańcza Upper** | Upper sub-catchment of the Czarna Hańcza river |
+| **Czarna Hańcza Lower** | Lower sub-catchment of the Czarna Hańcza river |
+| **Marycha** | Marycha river watershed |
+| **Gaładuś Lake** | Gaładuś Lake catchment |
+| **Szeszupa** | Szeszupa river watershed |
 
 At the core of the project, `main.R` automates the creation, transformation, and ingestion of spatial and tabular data into a PostgreSQL/PostGIS database required for running SWAT+ models. It processes shapefiles, CSVs, and rasters to ensure the database schema aligns with the project's requirements.
 
@@ -101,37 +113,47 @@ The table below summarizes the source and integration logic for each dataset pro
 - **Empty dataframe** — Tables initialized as empty placeholders for future modeling runs or user-defined inputs.
 - **`lt_con`** — Tables fetched directly from the legacy Lithuanian SWAT database, providing baseline parameters and model constants.
 
-| Table Name | Schema | Population Source |
-| --- | --- | --- |
-| `catchments` | `catchments` | Data folder (`WatershedsPL_corrected2.shp`) |
-| `riversegments` | `catchments` | Data folder (`RiversPLcorrected.shp`) |
-| `outlets` | `catchments` | Data folder (`outlets.csv`) |
-| `watersheds` | `catchments` | Data folder (`watersheds.csv`) |
-| `catchm_wshed` | `catchments` | Data folder (`catchm_wshed.csv`) |
-| `watertransfer` | `catchments` | Empty dataframe |
-| `landuse_swat_raster_lookup` | `landuse` | Data folder (`LU/lookup.csv`) |
-| `landusegroup_raster_lookup` | `landuse` | Empty dataframe |
-| `soil_swat_raster_lookup` | `soil` | Data folder (`soil/Lookup_soil.csv`) |
-| `usersoilpl` | `swat2012` | Data folder + `lt_con` |
-| `drainage_raster_lookup` | `mel_dr10lt` | Empty dataframe |
-| `atmdep2022` | `atm_deposition` | Data folder (`AtmDep2022.geojson`) |
-| `buffzones_stat` | `hru` | Data folder (`BufferZones/bufferstrips.shp`) |
-| `node_elevation` | `hru` | Data folder (`HRU/node_elevation.shp`) |
-| `counties_raster_lookup` | `counties` | Data folder (`Counties/counties.shp`) |
-| `counties` | `counties` | Data folder (`Counties/counties.shp`) |
-| `polygons` | `bufferstrips` | Data folder (`BufferZones/bufferstrips.shp`) |
-| `plant_data` | `fert` | `lt_con` |
-| `plants_luclass` | `fert` | `lt_con` |
-| `lakesreservoirs` | `hru` | Empty dataframe |
-| `precip_by_catch` | `hru` | Empty dataframe |
-| `gri_water_catchments` | `rivers` | Empty dataframe |
-| `segment_depth` | `rivers` | Empty dataframe |
-| `segmentmanningcoef` | `rivers` | Empty dataframe |
-| `statpcp` | `obs` | `lt_con` |
-| `catchments_regions` | `hru` | Empty dataframe |
-| `ps_catchment` | `point_sources_zero` | Empty dataframe |
-| `livestock_data` | `management` | Data folder (`LU/lugroups.tif`) |
-| `yield_data` | `management` | `lt_con` + Data folder (`Counties/counties.shp`) |
+| Table Name | Schema | Population Source | Status |
+| --- | --- | --- | --- |
+| `catchments` | `catchments` | Data folder (`Catchments/WatershedsPL_corrected2.shp`) | ✅ Filled |
+| `riversegments` | `catchments` | Data folder (`Catchments/RiversPLcorrected.shp`) | ✅ Filled |
+| `outlets` | `catchments` | Data folder (`Catchments/outlets.csv`) | ✅ Filled |
+| `watersheds` | `catchments` | Data folder (`Catchments/watersheds.csv`) | ✅ Filled |
+| `catchm_wshed` | `catchments` | Data folder (`Catchments/catchm_wshed.csv`) | ✅ Filled |
+| `watertransfer` | `catchments` | Empty dataframe | ⬜ Empty |
+| `landuse_swat_raster_lookup` | `landuse` | Data folder (`LU/lookup.csv`) | ✅ Filled |
+| `landusegroup_raster_lookup` | `landuse` | Hardcoded (7 land use classes) | ✅ Filled |
+| `soil_swat_raster_lookup` | `soil` | Data folder (`Soil/Lookup_soil.csv`) | ✅ Filled |
+| `usersoilpl` | `swat2012` | Data folder (`Soil/Lookup_soil.csv`) | ✅ Filled |
+| `drainage_raster_lookup` | `mel_dr10lt` | Hardcoded (2 drainage codes: `hm0`, `hm0g`) | ✅ Filled |
+| `atmdep2022` | `atm_deposition` | Data folder (`AtmosphericDeposition/AtmDep2022.geojson`) | ✅ Filled |
+| `buffzones_stat` | `hru` | Data folder (`BufferZones/bufferstrips.shp`) | ✅ Filled |
+| `node_elevation` | `hru` | Data folder (`HRU/node_elevation.shp`) | ✅ Filled |
+| `fertcoefbycatchm` | `hru` | Computed from `catchments` table (fertcoeff = 1) | ✅ Filled |
+| `lakesreservoirs` | `hru` | Data folder (`Lakes/lakesReserv.shp`) | ✅ Filled |
+| `precip_by_catch` | `hru` | Data folder (`Meteo/pcp_avg1997_2020.tif`) | ✅ Filled |
+| `catchments_regions` | `hru` | Empty dataframe | ⬜ Empty |
+| `counties_raster_lookup` | `counties` | Data folder (`Counties/counties.shp`) | ✅ Filled |
+| `counties` | `counties` | Data folder (`Counties/counties.shp`) | ✅ Filled |
+| `polygons` | `bufferstrips` | Data folder (`BufferZones/bufferstrips.shp`) | ✅ Filled |
+| `plant_data` | `fert` | `lt_con` | ✅ Filled |
+| `plants_luclass` | `fert` | `lt_con` | ✅ Filled |
+| `forest_biomass` | `fert` | `lt_con` | ✅ Filled |
+| `lup_table1` | `lup` | Data folder (`LU/lugroups.tif`) + `lt_con` | ✅ Filled |
+| `lup_table2` | `lup` | Data folder (`LU/lugroups.tif`) + `lt_con` | ✅ Filled |
+| `gri_water_catchments` | `rivers` | Empty dataframe | ⬜ Empty |
+| `segment_depth` | `rivers` | Empty dataframe | ⬜ Empty |
+| `segmentmanningcoef` | `rivers` | Empty dataframe | ⬜ Empty |
+| `statpcp` | `obs` | Weather data + `lt_con` | ✅ Filled |
+| `ps_catchment` | `point_sources_zero` | Empty dataframe | ⬜ Empty |
+| `small_catch` | `point_sources_zero` | Empty dataframe | ⬜ Empty |
+| `plantmng` | `management` | `lt_con` | ✅ Filled |
+| `plant_plt` | `management` | `lt_con` | ✅ Filled |
+| `urban_urb` | `management` | `lt_con` | ✅ Filled |
+| `cntable_lum` | `management` | `lt_con` | ✅ Filled |
+| `landuse_properties` | `management` | `lt_con` | ✅ Filled |
+| `livestock_data` | `management` | Data folder (`LU/lugroups.tif`) + `Counties/counties.shp` | ✅ Filled |
+| `yield_data` | `management` | `lt_con` + Data folder (`Counties/counties.shp`) | ✅ Filled |
 
 ## ⚠️ Safety Warning
 
